@@ -7,6 +7,7 @@ from src.capturer import (
     KindleWindowNotFoundError,
 )
 from src.converter import PdfConverter
+from src.ocr_namer import suggest_output_filename
 
 
 def _configure_stdout():
@@ -46,8 +47,14 @@ def main():
     )
     parser.add_argument(
         "--output",
-        default="output.pdf",
-        help="出力 PDF ファイル名（デフォルト: output.pdf）",
+        default=None,
+        help="出力 PDF ファイル名（省略時は1ページ目の OCR から自動命名）",
+    )
+    parser.add_argument(
+        "--name-chars",
+        type=int,
+        default=40,
+        help="OCR 自動命名で使う最大文字数（デフォルト: 40）",
     )
     parser.add_argument(
         "--temp-dir",
@@ -73,14 +80,17 @@ def main():
     parser.add_argument(
         "--delay",
         type=float,
-        default=1.5,
-        help="ページめくり後の待機秒数（デフォルト: 1.5）",
+        default=2.0,
+        help="ページめくり後の静止待ち最大秒数（連射差分が小さくなるまで待機。デフォルト: 2.0）",
     )
 
     args = parser.parse_args()
 
     if args.delay < 0:
         print("エラー: --delay は 0 以上にしてください。")
+        sys.exit(1)
+    if args.name_chars < 1:
+        print("エラー: --name-chars は 1 以上にしてください。")
         sys.exit(1)
 
     max_size_bytes = parse_size(args.max_size) if args.max_size else None
@@ -95,15 +105,26 @@ def main():
     print("1. Kindle for PC で対象の本を、できれば先頭付近で開いてください。")
     print("2. Enter を押すと、前面化・全画面化とページ送り方向の自動判定を行います。")
     print("3. キャプチャは最終ページ検出（または --pages）で自動停止します。")
-    print("   緊急停止: Ctrl+C、またはマウスを画面左上へ移動")
+    if args.output:
+        print(f"4. 出力ファイル: {args.output}")
+    else:
+        print("4. 出力ファイル名は1ページ目の OCR から自動決定します。")
+    print("   緊急停止: Ctrl+C")
     input("準備ができたら Enter を押してください...")
 
     try:
         capturer.prepare_kindle_window()
-        capturer.wait_for_focus(3)
+        capturer.wait_for_focus(2)
         capturer.detect_direction()
         capturer.capture_loop(args.temp_dir, args.pages)
-        converter.convert_images_to_pdf(args.temp_dir, args.output, max_size_bytes)
+
+        output_path = args.output
+        if not output_path:
+            output_path = suggest_output_filename(
+                args.temp_dir, max_chars=args.name_chars
+            )
+
+        converter.convert_images_to_pdf(args.temp_dir, output_path, max_size_bytes)
     except KindleWindowNotFoundError as e:
         print(f"エラー: {e}")
         sys.exit(1)
@@ -113,6 +134,9 @@ def main():
     except Exception as e:
         print(f"エラーが発生しました: {e}")
         sys.exit(1)
+    finally:
+        # 方向判定失敗時など、capture_loop に入る前に落ちても全画面を戻す
+        capturer.exit_fullscreen_if_needed()
 
 
 if __name__ == "__main__":

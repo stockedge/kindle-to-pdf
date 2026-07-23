@@ -3,4 +3,5 @@ pygetwindow
 img2pdf
 Pillow
 pypdf
+winocr
 playwright
