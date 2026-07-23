@@ -39,6 +39,14 @@ uv sync
 uv sync --group dev
 ```
 
+型検査・リント・フォーマット:
+
+```powershell
+uv run mypy
+uv run ruff check .
+uv run ruff format .
+```
+
 ## 使い方
 
 1. Kindle for PC で対象の本を、できれば**先頭付近**で開く

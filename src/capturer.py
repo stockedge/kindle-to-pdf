@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import os
 import time
@@ -339,7 +340,8 @@ class KindleCapturer:
         try:
             self._saved_mouse_pos = cast(_MousePoint, pyautogui.position())
             screen_width, screen_height = pyautogui.size()
-            # 左上は FAILSAFE のため右下へ（端ぴったりだと環境によって問題になることがあるので少し内側）
+            # 左上は FAILSAFE のため右下へ
+            # （端ぴったりだと環境によって問題になることがあるので少し内側）
             pyautogui.moveTo(screen_width - 2, screen_height - 2, duration=0)
         except Exception as e:
             print(f"マウス退避に失敗しました: {e}")
@@ -363,14 +365,12 @@ class KindleCapturer:
             self._cursor_hidden = False
 
         if self._saved_mouse_pos is not None:
-            try:
+            with contextlib.suppress(Exception):
                 pyautogui.moveTo(
                     self._saved_mouse_pos.x,
                     self._saved_mouse_pos.y,
                     duration=0,
                 )
-            except Exception:
-                pass
             self._saved_mouse_pos = None
 
     def _wait_for_settled_page(
