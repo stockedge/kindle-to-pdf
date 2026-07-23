@@ -1,4 +1,6 @@
 pyautogui
+pygetwindow
 img2pdf
-playwright
+Pillow
 pypdf
+playwright
