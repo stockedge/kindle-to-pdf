@@ -1,0 +1,93 @@
+[project]
+name = "kindle-to-pdf"
+version = "0.1.0"
+description = "Capture Kindle for PC books and convert them to PDF"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pyautogui>=0.9.54",
+    "pygetwindow>=0.0.9",
+    "img2pdf>=0.5.1",
+    "pillow>=10.0.0",
+    "pypdf>=4.0.0",
+    "winocr>=0.0.15",
+]
+
+[dependency-groups]
+dev = [
+    "playwright>=1.40.0",
+    "mypy>=1.14.0",
+    "ruff>=0.9.0",
+    "types-Pillow>=10.0.0",
+]
+
+[tool.uv]
+package = false
+# 実行に不要な lint/test 系は `uv sync --group dev` のときだけ入れる
+default-groups = []
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "."]
+exclude = [
+    ".venv",
+    "screenshots",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "SIM",    # flake8-simplify
+    "ANN",    # flake8-annotations
+    "RUF",    # ruff-specific
+]
+ignore = [
+    "ANN401",  # Any を一部サードパーティ境界で許容
+    # 日本語メッセージの全角括弧は意図的（半角との混同警告を抑止）
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"test_env.py" = ["ANN"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+docstring-code-format = true
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+warn_unused_ignores = true
+show_error_codes = true
+pretty = true
+files = [
+    "main.py",
+    "split_pdf.py",
+    "src",
+]
+mypy_path = "."
+explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+module = [
+    "pyautogui",
+    "pyautogui.*",
+    "pygetwindow",
+    "pygetwindow.*",
+    "img2pdf",
+    "img2pdf.*",
+    "winocr",
+    "winocr.*",
+]
+ignore_missing_imports = true

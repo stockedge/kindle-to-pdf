@@ -2,8 +2,9 @@
 screenshots/
 output/
 user_data/
+*.pdf
 
-# Python
+# Python / uv
 __pycache__/
 *.pyc
 .venv/

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import glob
 import os
 
@@ -5,7 +7,12 @@ import img2pdf
 
 
 class PdfConverter:
-    def convert_images_to_pdf(self, image_dir, output_filename, max_size_bytes=None):
+    def convert_images_to_pdf(
+        self,
+        image_dir: str,
+        output_filename: str,
+        max_size_bytes: int | None = None,
+    ) -> None:
         """ディレクトリ内の画像を PDF に変換する。サイズ上限超過時は分割する。"""
         print(f"{image_dir} 内の画像を {output_filename} に変換しています...")
 
@@ -24,7 +31,7 @@ class PdfConverter:
                 print(f"PDF の作成に失敗しました: {e}")
             return
 
-        current_batch = []
+        current_batch: list[str] = []
         current_size = 0
         part_num = 1
         base_name, ext = os.path.splitext(output_filename)
@@ -48,7 +55,7 @@ class PdfConverter:
             else:
                 self._write_batch(current_batch, f"{base_name}_part_{part_num}{ext}")
 
-    def _write_batch(self, images, output_filename):
+    def _write_batch(self, images: list[str], output_filename: str) -> None:
         try:
             with open(output_filename, "wb") as f:
                 f.write(img2pdf.convert(images))

@@ -1,13 +1,17 @@
+from __future__ import annotations
+
 import ctypes
 import os
 import time
 from ctypes import wintypes
 from datetime import timedelta
+from typing import Protocol, cast
 
 import pyautogui
 import pygetwindow as gw
 from PIL import Image, ImageChops
 
+from src.types import PageDirection, ResolvedPageDirection
 
 # 直前ページとの MSE がこの値以下なら「同じページ」
 _SAME_PAGE_MSE_THRESHOLD = 5.0
@@ -30,13 +34,24 @@ _FULLSCREEN_HINT_CLEAR_STREAK = 2
 _FULLSCREEN_HINT_MIN_WAIT_SEC = 1.5
 
 # Kindle for PC の実行ファイル名（タイトルに kindle-to-pdf 等が含まれる誤検出を避ける）
-_KINDLE_PROCESS_NAMES = {"kindle.exe"}
+_KINDLE_PROCESS_NAMES = frozenset({"kindle.exe"})
 
 _user32 = ctypes.WinDLL("user32", use_last_error=True)
 _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 _SW_RESTORE = 9
 _SW_SHOWMAXIMIZED = 3
+
+
+class _MousePoint(Protocol):
+    x: int
+    y: int
+
+
+class _WindowLike(Protocol):
+    title: str
+    width: int
+    height: int
 
 
 class KindleWindowNotFoundError(Exception):
@@ -48,19 +63,23 @@ class DirectionDetectError(Exception):
 
 
 class KindleCapturer:
-    def __init__(self, direction="auto", delay_sec=2.0):
-        self.direction = direction
+    def __init__(
+        self,
+        direction: PageDirection = "auto",
+        delay_sec: float = 2.0,
+    ) -> None:
+        self.direction: PageDirection = direction
         # ページめくり後の静止待ちの最大秒数
         self.delay_sec = delay_sec
         self._cursor_hidden = False
-        self._saved_mouse_pos = None
-        self._kindle_hwnd = None
+        self._saved_mouse_pos: _MousePoint | None = None
+        self._kindle_hwnd: int | None = None
         self._fullscreen_engaged = False
         # マウスを画面左上へ急激に動かすと緊急停止
         pyautogui.FAILSAFE = True
         pyautogui.PAUSE = 0
 
-    def prepare_kindle_window(self):
+    def prepare_kindle_window(self) -> None:
         """Kindle ウィンドウを検出し、前面化・最大化・全画面化を試行する。"""
         kindle_window = self._find_kindle_window()
         if kindle_window is None:
@@ -85,7 +104,7 @@ class KindleCapturer:
             print("Kindle ウィンドウを前面化し、全画面化を試行しました。")
             self.wait_for_fullscreen_hint_to_dismiss()
 
-    def exit_fullscreen_if_needed(self):
+    def exit_fullscreen_if_needed(self) -> None:
         """開始時に全画面化していた場合、F11 で解除する。"""
         if not self._fullscreen_engaged:
             return
@@ -95,9 +114,7 @@ class KindleCapturer:
         hwnd = self._kindle_hwnd
         if not hwnd or not _user32.IsWindow(hwnd):
             kindle_window = self._find_kindle_window()
-            hwnd = (
-                int(getattr(kindle_window, "_hWnd", 0) or 0) if kindle_window else 0
-            )
+            hwnd = int(getattr(kindle_window, "_hWnd", 0) or 0) if kindle_window else 0
             self._kindle_hwnd = hwnd or None
 
         try:
@@ -107,13 +124,16 @@ class KindleCapturer:
                 time.sleep(0.2)
                 print("全画面表示を解除しました。")
             else:
-                print("全画面解除のため Kindle を前面にできませんでした。必要なら手動で F11 を押してください。")
+                print(
+                    "全画面解除のため Kindle を前面にできませんでした。"
+                    "必要なら手動で F11 を押してください。"
+                )
         except Exception as e:
             print(f"全画面解除に失敗しました: {e}")
         finally:
             self._fullscreen_engaged = False
 
-    def wait_for_fullscreen_hint_to_dismiss(self):
+    def wait_for_fullscreen_hint_to_dismiss(self) -> None:
         """全画面化直後の「F11キーを押して全画面表示を終了」案内が消えるまで待つ。"""
         from src.ocr_namer import has_fullscreen_exit_hint
 
@@ -132,9 +152,7 @@ class KindleCapturer:
             except Exception as e:
                 # OCR 失敗時は上部帯の静止で代替
                 print(f"案内表示の OCR に失敗したため、静止判定に切り替えます: {e}")
-                self._wait_for_top_band_settle(
-                    timeout_sec=max(0.5, deadline - time.monotonic())
-                )
+                self._wait_for_top_band_settle(timeout_sec=max(0.5, deadline - time.monotonic()))
                 print("上部画面の静止を確認しました。続行します。")
                 return
 
@@ -161,13 +179,13 @@ class KindleCapturer:
         print("案内表示の待機がタイムアウトしたため続行します。")
 
     @staticmethod
-    def _crop_top_band(image):
+    def _crop_top_band(image: Image.Image) -> Image.Image:
         """案内が出やすい画面上部だけ切り出す。"""
         width, height = image.size
         band_height = max(100, int(height * 0.14))
         return image.crop((0, 0, width, band_height))
 
-    def _wait_for_top_band_settle(self, timeout_sec):
+    def _wait_for_top_band_settle(self, timeout_sec: float) -> None:
         """上部帯のフレーム差分が小さくなるまで待つ（OCR フォールバック用）。"""
         deadline = time.monotonic() + max(0.2, timeout_sec)
         last = self._to_thumbnail(self._crop_top_band(pyautogui.screenshot()))
@@ -185,7 +203,7 @@ class KindleCapturer:
             else:
                 settle_streak = 0
 
-    def wait_for_focus(self, seconds=2):
+    def wait_for_focus(self, seconds: int = 2) -> None:
         """キャプチャ開始前の短いカウントダウン。"""
         print("ウィンドウを触らずにそのままお待ちください。")
         for remaining in range(seconds, 0, -1):
@@ -193,12 +211,14 @@ class KindleCapturer:
             time.sleep(1)
         print("キャプチャを開始します。")
 
-    def detect_direction(self):
+    def detect_direction(self) -> ResolvedPageDirection:
         """右キー・左キーを試し、ページが変わる方向を判定する。元のページに戻す。"""
-        if self.direction in ("ltr", "rtl"):
-            label = "右送り (ltr)" if self.direction == "ltr" else "左送り (rtl)"
-            print(f"ページ送り方向: {label}（指定値）")
-            return self.direction
+        if self.direction == "ltr":
+            print("ページ送り方向: 右送り (ltr)（指定値）")
+            return "ltr"
+        if self.direction == "rtl":
+            print("ページ送り方向: 左送り (rtl)（指定値）")
+            return "rtl"
 
         print("ページ送り方向を自動判定しています...")
         print("※ 本の先頭付近で実行してください（最終ページだと誤判定することがあります）。")
@@ -207,44 +227,44 @@ class KindleCapturer:
 
         # まず右キー（横書き・ltr で次ページ）
         pyautogui.press("right")
-        after_right, changed_right = self._wait_for_settled_page(
-            baseline, self.delay_sec
-        )
+        after_right, changed_right = self._wait_for_settled_page(baseline, self.delay_sec)
 
         if changed_right:
             pyautogui.press("left")
             self._wait_for_settled_page(after_right, self.delay_sec)
             self.direction = "ltr"
             print("ページ送り方向: 右送り (ltr) と判定しました。")
-            return self.direction
+            return "ltr"
 
         # 右では変わらない → 左キーを試す（縦書き・rtl）
         pyautogui.press("left")
-        after_left, changed_left = self._wait_for_settled_page(
-            baseline, self.delay_sec
-        )
+        after_left, changed_left = self._wait_for_settled_page(baseline, self.delay_sec)
 
         if changed_left:
             pyautogui.press("right")
             self._wait_for_settled_page(after_left, self.delay_sec)
             self.direction = "rtl"
             print("ページ送り方向: 左送り (rtl) と判定しました。")
-            return self.direction
+            return "rtl"
 
         raise DirectionDetectError(
             "ページ送り方向を判定できませんでした。"
             "本の先頭付近で開き直すか、--direction ltr または --direction rtl を指定してください。"
         )
 
-    def capture_loop(self, output_dir, page_count=None):
+    def capture_loop(
+        self,
+        output_dir: str,
+        page_count: int | None = None,
+    ) -> str | None:
         """ページをキャプチャし、最終ページ検出または枚数上限で停止する。"""
         self._prepare_output_dir(output_dir)
 
         page_num = 1
         same_page_streak = 0
-        previous_image = None
+        previous_image: Image.Image | None = None
         started_at = time.monotonic()
-        stop_reason = None
+        stop_reason: str | None = None
 
         print("途中で止める場合: このターミナルで Ctrl+C。")
         print("（マウスは文字に被らないよう画面右下へ退避し、カーソルを非表示にします）")
@@ -268,9 +288,7 @@ class KindleCapturer:
 
                 if previous_image is None:
                     # 開始直後も一瞬連射して、表示が落ち着いたフレームを採用
-                    screenshot, _ = self._wait_for_settled_page(
-                        None, min(self.delay_sec, 0.8)
-                    )
+                    screenshot, _ = self._wait_for_settled_page(None, min(self.delay_sec, 0.8))
                     self._save_image(screenshot, filename)
                 else:
                     screenshot = previous_image
@@ -282,9 +300,7 @@ class KindleCapturer:
                     break
 
                 self._next_page()
-                next_image, changed = self._wait_for_settled_page(
-                    screenshot, self.delay_sec
-                )
+                next_image, changed = self._wait_for_settled_page(screenshot, self.delay_sec)
 
                 if not changed:
                     same_page_streak = 1
@@ -318,10 +334,10 @@ class KindleCapturer:
             print(f"停止理由: {stop_reason}")
         return stop_reason
 
-    def _park_and_hide_cursor(self):
+    def _park_and_hide_cursor(self) -> None:
         """カーソルを画面右下へ退避し、システムカーソルを非表示にする。"""
         try:
-            self._saved_mouse_pos = pyautogui.position()
+            self._saved_mouse_pos = cast(_MousePoint, pyautogui.position())
             screen_width, screen_height = pyautogui.size()
             # 左上は FAILSAFE のため右下へ（端ぴったりだと環境によって問題になることがあるので少し内側）
             pyautogui.moveTo(screen_width - 2, screen_height - 2, duration=0)
@@ -336,7 +352,7 @@ class KindleCapturer:
         except Exception as e:
             print(f"カーソル非表示に失敗しました: {e}")
 
-    def _restore_cursor(self):
+    def _restore_cursor(self) -> None:
         """カーソル表示とマウス位置を元に戻す。"""
         if self._cursor_hidden:
             try:
@@ -357,7 +373,11 @@ class KindleCapturer:
                 pass
             self._saved_mouse_pos = None
 
-    def _wait_for_settled_page(self, previous_image, timeout_sec):
+    def _wait_for_settled_page(
+        self,
+        previous_image: Image.Image | None,
+        timeout_sec: float,
+    ) -> tuple[Image.Image, bool]:
         """連射キャプチャし、フレーム間差分（時間微分）が小さく落ち着いた画面を返す。
 
         Returns:
@@ -365,11 +385,9 @@ class KindleCapturer:
             previous_image が None のときは changed は常に True。
         """
         deadline = time.monotonic() + max(0.05, timeout_sec)
-        previous_thumb = (
-            self._to_thumbnail(previous_image) if previous_image is not None else None
-        )
+        previous_thumb = self._to_thumbnail(previous_image) if previous_image is not None else None
 
-        current = pyautogui.screenshot()
+        current: Image.Image = pyautogui.screenshot()
         last_thumb = self._to_thumbnail(current)
         settle_streak = 0
         saw_motion = False
@@ -420,7 +438,7 @@ class KindleCapturer:
         page_mse = self._mse_thumbs(previous_thumb, self._to_thumbnail(current))
         return current, page_mse > _SAME_PAGE_MSE_THRESHOLD
 
-    def _prepare_output_dir(self, output_dir):
+    def _prepare_output_dir(self, output_dir: str) -> None:
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
             return
@@ -434,10 +452,10 @@ class KindleCapturer:
             except Exception as e:
                 print(f"{file_path} の削除に失敗しました: {e}")
 
-    def _find_kindle_window(self):
+    def _find_kindle_window(self) -> _WindowLike | None:
         """Kindle.exe のウィンドウを返す（タイトル部分一致による誤検出を避ける）。"""
-        seen_handles = set()
-        candidates = []
+        seen_handles: set[object] = set()
+        candidates: list[_WindowLike] = []
 
         for title in gw.getAllTitles():
             if not title:
@@ -450,16 +468,16 @@ class KindleCapturer:
                     continue
                 seen_handles.add(handle)
 
-                process_name = self._get_process_name(handle)
+                process_name = self._get_process_name(int(handle))
                 if process_name not in _KINDLE_PROCESS_NAMES:
                     continue
-                candidates.append(window)
+                candidates.append(cast(_WindowLike, window))
 
         if not candidates:
             return None
 
         # 面積が大きい（読書用の本体ウィンドウ）を優先
-        def window_area(window):
+        def window_area(window: _WindowLike) -> int:
             try:
                 return max(0, window.width) * max(0, window.height)
             except Exception:
@@ -469,7 +487,7 @@ class KindleCapturer:
         return candidates[0]
 
     @staticmethod
-    def _focus_window(hwnd):
+    def _focus_window(hwnd: int) -> bool:
         """Win32 API でウィンドウを前面・最大化する。成功なら True。"""
         if not hwnd or not _user32.IsWindow(hwnd):
             return False
@@ -513,53 +531,49 @@ class KindleCapturer:
                 _user32.AttachThreadInput(foreground_thread, current_thread, False)
 
     @staticmethod
-    def _get_process_name(hwnd):
+    def _get_process_name(hwnd: int) -> str:
         """ウィンドウハンドルから実行ファイル名（小文字）を取得する。"""
         pid = wintypes.DWORD()
         _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
         if not pid.value:
             return ""
 
-        handle = _kernel32.OpenProcess(
-            _PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value
-        )
+        handle = _kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
         if not handle:
             return ""
 
         try:
             buffer = ctypes.create_unicode_buffer(260)
             size = wintypes.DWORD(len(buffer))
-            if not _kernel32.QueryFullProcessImageNameW(
-                handle, 0, buffer, ctypes.byref(size)
-            ):
+            if not _kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):
                 return ""
             return os.path.basename(buffer.value).lower()
         finally:
             _kernel32.CloseHandle(handle)
 
-    def _screenshot_page(self, filename):
+    def _screenshot_page(self, filename: str) -> Image.Image:
         """全画面をキャプチャして保存し、PIL Image を返す。"""
-        screenshot = pyautogui.screenshot()
+        screenshot = cast(Image.Image, pyautogui.screenshot())
         self._save_image(screenshot, filename)
         return screenshot
 
     @staticmethod
-    def _save_image(image, filename):
+    def _save_image(image: Image.Image, filename: str) -> None:
         # compress_level を下げて保存を速くする（品質はロスレスのまま）
         image.save(filename, compress_level=1)
 
-    def _next_page(self):
+    def _next_page(self) -> None:
         if self.direction == "rtl":
             pyautogui.press("left")
         else:
             pyautogui.press("right")
 
     @staticmethod
-    def _to_thumbnail(image):
+    def _to_thumbnail(image: Image.Image) -> Image.Image:
         return image.convert("RGB").resize(_COMPARE_SIZE, Image.Resampling.BILINEAR)
 
     @staticmethod
-    def _mse_thumbs(thumb_a, thumb_b):
+    def _mse_thumbs(thumb_a: Image.Image, thumb_b: Image.Image) -> float:
         """縮小済み RGB 画像同士の平均二乗誤差。"""
         diff = ImageChops.difference(thumb_a, thumb_b)
         histogram = diff.histogram()
@@ -571,15 +585,24 @@ class KindleCapturer:
                 sum_sq += (value**2) * count
         return sum_sq / (pixel_count * 3)
 
-    def _images_are_nearly_identical(self, image_a, image_b):
+    def _images_are_nearly_identical(
+        self,
+        image_a: Image.Image,
+        image_b: Image.Image,
+    ) -> bool:
         """縮小した画像の MSE が閾値以下なら同一とみなす。"""
         return (
             self._mse_thumbs(self._to_thumbnail(image_a), self._to_thumbnail(image_b))
             <= _SAME_PAGE_MSE_THRESHOLD
         )
 
-    def _print_progress(self, page_num, page_count, started_at):
-        elapsed_sec = max(0, time.monotonic() - started_at)
+    def _print_progress(
+        self,
+        page_num: int,
+        page_count: int | None,
+        started_at: float,
+    ) -> None:
+        elapsed_sec = max(0.0, time.monotonic() - started_at)
         elapsed_text = self._format_duration(elapsed_sec)
 
         if page_count:
@@ -595,18 +618,14 @@ class KindleCapturer:
                 f"| 経過 {elapsed_text} | 残り約 {eta_text}"
             )
         else:
-            pages_per_min = (
-                (page_num / elapsed_sec) * 60 if elapsed_sec > 0 and page_num > 1 else 0
-            )
-            speed_text = (
-                f" | 約 {pages_per_min:.0f} ページ/分" if pages_per_min > 0 else ""
-            )
+            pages_per_min = (page_num / elapsed_sec) * 60 if elapsed_sec > 0 and page_num > 1 else 0
+            speed_text = f" | 約 {pages_per_min:.0f} ページ/分" if pages_per_min > 0 else ""
             print(
                 f"キャプチャ中: {page_num}ページ "
                 f"| 経過 {elapsed_text}{speed_text} | 最終ページで自動停止"
             )
 
     @staticmethod
-    def _format_duration(seconds):
+    def _format_duration(seconds: float) -> str:
         total_seconds = int(seconds)
         return str(timedelta(seconds=total_seconds))

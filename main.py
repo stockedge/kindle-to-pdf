@@ -1,5 +1,9 @@
+from __future__ import annotations
+
 import argparse
+import contextlib
 import sys
+from typing import cast
 
 from src.capturer import (
     DirectionDetectError,
@@ -8,38 +12,37 @@ from src.capturer import (
 )
 from src.converter import PdfConverter
 from src.ocr_namer import suggest_output_filename
+from src.types import PageDirection
 
 
-def _configure_stdout():
+def _configure_stdout() -> None:
     """Windows コンソールでも日本語が読めるように出力エンコーディングを整える。"""
     if sys.platform != "win32":
         return
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if callable(reconfigure):
-            try:
+            with contextlib.suppress(Exception):
                 reconfigure(encoding="utf-8")
-            except Exception:
-                pass
 
 
-def parse_size(size_str):
+def parse_size(size_str: str) -> int | None:
     """'1.8MB' のようなサイズ文字列をバイト数に変換する。"""
-    size_str = size_str.upper().strip()
-    units = {"KB": 1024, "MB": 1024**2, "GB": 1024**3}
+    normalized = size_str.upper().strip()
+    units: dict[str, int] = {"KB": 1024, "MB": 1024**2, "GB": 1024**3}
     for unit, factor in units.items():
-        if size_str.endswith(unit):
+        if normalized.endswith(unit):
             try:
-                return int(float(size_str[: -len(unit)]) * factor)
+                return int(float(normalized[: -len(unit)]) * factor)
             except ValueError:
                 return None
     try:
-        return int(size_str)
+        return int(normalized)
     except ValueError:
         return None
 
 
-def main():
+def main() -> None:
     _configure_stdout()
 
     parser = argparse.ArgumentParser(
@@ -98,7 +101,8 @@ def main():
         print(f"エラー: --max-size の形式が不正です: {args.max_size}")
         sys.exit(1)
 
-    capturer = KindleCapturer(direction=args.direction, delay_sec=args.delay)
+    direction = cast(PageDirection, args.direction)
+    capturer = KindleCapturer(direction=direction, delay_sec=args.delay)
     converter = PdfConverter()
 
     print("=== Kindle for PC → PDF 変換 ===")
@@ -118,11 +122,9 @@ def main():
         capturer.detect_direction()
         capturer.capture_loop(args.temp_dir, args.pages)
 
-        output_path = args.output
+        output_path: str | None = args.output
         if not output_path:
-            output_path = suggest_output_filename(
-                args.temp_dir, max_chars=args.name_chars
-            )
+            output_path = suggest_output_filename(args.temp_dir, max_chars=args.name_chars)
 
         converter.convert_images_to_pdf(args.temp_dir, output_path, max_size_bytes)
     except KindleWindowNotFoundError as e:

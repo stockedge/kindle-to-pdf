@@ -1,20 +1,29 @@
+from __future__ import annotations
+
 import glob
 import os
 import re
 from datetime import datetime
+from typing import cast
 
 from PIL import Image
 
+from src.types import OcrLine, OcrResult
 
 # Windows ファイル名に使えない文字
 _INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 # CJK 文字の間に入った余分な空白を除去（Windows OCR の癖）
 _CJK_SPACES = re.compile(
-    r"(?<=[\u3040-\u30ff\u3400-\u9fff\uff66-\uff9f])\s+(?=[\u3040-\u30ff\u3400-\u9fff\uff66-\uff9f])"
+    r"(?<=[\u3040-\u30ff\u3400-\u9fff\uff66-\uff9f])\s+"
+    r"(?=[\u3040-\u30ff\u3400-\u9fff\uff66-\uff9f])"
 )
 
 
-def suggest_output_filename(image_dir, max_chars=40, lang="ja"):
+def suggest_output_filename(
+    image_dir: str,
+    max_chars: int = 40,
+    lang: str = "ja",
+) -> str:
     """1ページ目を OCR し、先頭文字から PDF ファイル名を作る。
 
     Args:
@@ -48,7 +57,7 @@ def suggest_output_filename(image_dir, max_chars=40, lang="ja"):
     return f"{filename_stem}.pdf"
 
 
-def sanitize_filename_stem(text, max_chars=40):
+def sanitize_filename_stem(text: str, max_chars: int = 40) -> str:
     """OCR テキストから Windows 向けのファイル名本体を作る。"""
     if not text:
         return ""
@@ -66,29 +75,30 @@ def sanitize_filename_stem(text, max_chars=40):
     return normalized
 
 
-def _find_first_page(image_dir):
+def _find_first_page(image_dir: str) -> str | None:
     pages = sorted(glob.glob(os.path.join(image_dir, "page_*.png")))
     return pages[0] if pages else None
 
 
-def _ocr_image(image_path, lang="ja"):
+def _ocr_image(image_path: str, lang: str = "ja") -> str:
     """画像ファイルを OCR する。"""
     image = Image.open(image_path)
     return ocr_pil_image(image, lang=lang)
 
 
-def ocr_pil_image(image, lang="ja"):
+def ocr_pil_image(image: Image.Image, lang: str = "ja") -> str:
     """PIL Image を Windows OCR で読み取る。"""
     from winocr import recognize_pil_sync
 
-    result = recognize_pil_sync(image, lang=lang)
+    raw_result = recognize_pil_sync(image, lang=lang)
 
-    if isinstance(result, dict):
+    if isinstance(raw_result, dict):
+        result = cast(OcrResult, raw_result)
         lines = result.get("lines") or []
         if lines:
-            line_texts = []
+            line_texts: list[str] = []
             for line in lines:
-                line_text = line.get("text") if isinstance(line, dict) else str(line)
+                line_text = _extract_line_text(line)
                 if line_text:
                     line_texts.append(_CJK_SPACES.sub("", line_text).strip())
             if line_texts:
@@ -96,10 +106,18 @@ def ocr_pil_image(image, lang="ja"):
         text = result.get("text") or ""
         return _CJK_SPACES.sub("", text).strip()
 
-    return _CJK_SPACES.sub("", str(result)).strip()
+    return _CJK_SPACES.sub("", str(raw_result)).strip()
 
 
-def has_fullscreen_exit_hint(image):
+def _extract_line_text(line: OcrLine | object) -> str:
+    if isinstance(line, dict):
+        typed_line = cast(OcrLine, line)
+        text = typed_line.get("text")
+        return text if isinstance(text, str) else ""
+    return str(line)
+
+
+def has_fullscreen_exit_hint(image: Image.Image) -> bool:
     """画面上部などに出る「F11で全画面終了」系の案内が表示中かどうか。"""
     text = ocr_pil_image(image, lang="ja")
     compact = re.sub(r"\s+", "", text).lower()
@@ -110,9 +128,11 @@ def has_fullscreen_exit_hint(image):
         "全画面表示",
         "fullscreen",
     )
-    return any(needle.lower() in compact if needle.isascii() else needle in compact for needle in needles)
+    return any(
+        needle.lower() in compact if needle.isascii() else needle in compact for needle in needles
+    )
 
 
-def _fallback_filename():
+def _fallback_filename() -> str:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return f"kindle_book_{stamp}.pdf"
