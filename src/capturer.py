@@ -23,6 +23,11 @@ _SAME_PAGE_STREAK_TO_STOP = 2
 _COMPARE_SIZE = (64, 64)
 # 連射キャプチャの間隔
 _BURST_POLL_SEC = 0.04
+# 全画面案内（F11で終了…）待機
+_FULLSCREEN_HINT_POLL_SEC = 0.35
+_FULLSCREEN_HINT_TIMEOUT_SEC = 8.0
+_FULLSCREEN_HINT_CLEAR_STREAK = 2
+_FULLSCREEN_HINT_MIN_WAIT_SEC = 1.5
 
 # Kindle for PC の実行ファイル名（タイトルに kindle-to-pdf 等が含まれる誤検出を避ける）
 _KINDLE_PROCESS_NAMES = {"kindle.exe"}
@@ -78,6 +83,7 @@ class KindleCapturer:
             self._fullscreen_engaged = True
             time.sleep(0.3)
             print("Kindle ウィンドウを前面化し、全画面化を試行しました。")
+            self.wait_for_fullscreen_hint_to_dismiss()
 
     def exit_fullscreen_if_needed(self):
         """開始時に全画面化していた場合、F11 で解除する。"""
@@ -106,6 +112,78 @@ class KindleCapturer:
             print(f"全画面解除に失敗しました: {e}")
         finally:
             self._fullscreen_engaged = False
+
+    def wait_for_fullscreen_hint_to_dismiss(self):
+        """全画面化直後の「F11キーを押して全画面表示を終了」案内が消えるまで待つ。"""
+        from src.ocr_namer import has_fullscreen_exit_hint
+
+        print("全画面の案内表示が消えるのを待っています...")
+        started_at = time.monotonic()
+        deadline = started_at + _FULLSCREEN_HINT_TIMEOUT_SEC
+        clear_streak = 0
+        saw_hint = False
+
+        while time.monotonic() < deadline:
+            screenshot = pyautogui.screenshot()
+            top_band = self._crop_top_band(screenshot)
+
+            try:
+                hint_visible = has_fullscreen_exit_hint(top_band)
+            except Exception as e:
+                # OCR 失敗時は上部帯の静止で代替
+                print(f"案内表示の OCR に失敗したため、静止判定に切り替えます: {e}")
+                self._wait_for_top_band_settle(
+                    timeout_sec=max(0.5, deadline - time.monotonic())
+                )
+                print("上部画面の静止を確認しました。続行します。")
+                return
+
+            if hint_visible:
+                if not saw_hint:
+                    print("案内表示を検出しました。消去待ち...")
+                saw_hint = True
+                clear_streak = 0
+            else:
+                clear_streak += 1
+                elapsed = time.monotonic() - started_at
+                ready = clear_streak >= _FULLSCREEN_HINT_CLEAR_STREAK and (
+                    saw_hint or elapsed >= _FULLSCREEN_HINT_MIN_WAIT_SEC
+                )
+                if ready:
+                    if saw_hint:
+                        print("案内表示が消えたことを確認しました。")
+                    else:
+                        print("案内表示は出ないか、すでに消えているため続行します。")
+                    return
+
+            time.sleep(_FULLSCREEN_HINT_POLL_SEC)
+
+        print("案内表示の待機がタイムアウトしたため続行します。")
+
+    @staticmethod
+    def _crop_top_band(image):
+        """案内が出やすい画面上部だけ切り出す。"""
+        width, height = image.size
+        band_height = max(100, int(height * 0.14))
+        return image.crop((0, 0, width, band_height))
+
+    def _wait_for_top_band_settle(self, timeout_sec):
+        """上部帯のフレーム差分が小さくなるまで待つ（OCR フォールバック用）。"""
+        deadline = time.monotonic() + max(0.2, timeout_sec)
+        last = self._to_thumbnail(self._crop_top_band(pyautogui.screenshot()))
+        settle_streak = 0
+
+        while time.monotonic() < deadline:
+            time.sleep(_BURST_POLL_SEC)
+            current = self._to_thumbnail(self._crop_top_band(pyautogui.screenshot()))
+            frame_mse = self._mse_thumbs(last, current)
+            last = current
+            if frame_mse <= _SETTLE_MSE_THRESHOLD:
+                settle_streak += 1
+                if settle_streak >= _SETTLE_STREAK_REQUIRED:
+                    return
+            else:
+                settle_streak = 0
 
     def wait_for_focus(self, seconds=2):
         """キャプチャ開始前の短いカウントダウン。"""

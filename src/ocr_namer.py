@@ -72,10 +72,15 @@ def _find_first_page(image_dir):
 
 
 def _ocr_image(image_path, lang="ja"):
-    """Windows OCR (winocr) で画像からテキストを取得する。"""
+    """画像ファイルを OCR する。"""
+    image = Image.open(image_path)
+    return ocr_pil_image(image, lang=lang)
+
+
+def ocr_pil_image(image, lang="ja"):
+    """PIL Image を Windows OCR で読み取る。"""
     from winocr import recognize_pil_sync
 
-    image = Image.open(image_path)
     result = recognize_pil_sync(image, lang=lang)
 
     if isinstance(result, dict):
@@ -92,6 +97,20 @@ def _ocr_image(image_path, lang="ja"):
         return _CJK_SPACES.sub("", text).strip()
 
     return _CJK_SPACES.sub("", str(result)).strip()
+
+
+def has_fullscreen_exit_hint(image):
+    """画面上部などに出る「F11で全画面終了」系の案内が表示中かどうか。"""
+    text = ocr_pil_image(image, lang="ja")
+    compact = re.sub(r"\s+", "", text).lower()
+    # 英数字は小文字化済み。日本語はそのまま照合
+    needles = (
+        "f11",
+        "全画面表示を終了",
+        "全画面表示",
+        "fullscreen",
+    )
+    return any(needle.lower() in compact if needle.isascii() else needle in compact for needle in needles)
 
 
 def _fallback_filename():
